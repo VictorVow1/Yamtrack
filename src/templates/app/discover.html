@@ -102,9 +102,11 @@
 
 {% block js %}
   <script src="{% static 'js/cache-updater.js' %}"></script>
+  <script src="{% static 'js/discover-tabs.js' %}"></script>{# fork:tabbed-discover #}
   <script>
     function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing, initialActivityVersion) {
       return {
+        ...window.discoverTabs("{% url 'discover_tab' %}"),  // fork:tabbed-discover
         selectedMedia: initialMedia || "all",
         showMore: Boolean(initialShowMore),
         discoverDebug: Boolean(initialDebug),
@@ -512,6 +514,8 @@
             return;
           }
           this.selectedMedia = mediaType;
+          // selectedTab is re-synced from the server's first-enabled tab by the
+          // tablist x-init once the swapped rows render.
           this.manualRefreshPending = false;
           this.dismissRefreshStatus();
           this.resetRefreshState();

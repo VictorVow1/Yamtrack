@@ -1,0 +1,318 @@
+# ruff: noqa: D102, D101
+
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase, override_settings
+from django.urls import reverse
+
+from app.discover import tabs
+from app.discover.schemas import CandidateItem, RowResult
+from app.discover.tabs import TAB_REGISTRY, capabilities
+from app.discover.tabs.builders import (
+    _current_anime_season,
+    _mal_anime_ranking_candidates,
+    _mal_anime_season_candidates,
+    _previous_anime_season,
+    tab_row_candidates,
+)
+from app.discover_tab_views import _discover_tabs_payload
+
+
+class TabRegistryTests(TestCase):
+    """The tab registry stays consistent with the dispatch and providers."""
+
+    def test_every_media_type_defaults_to_trending(self):
+        for media_type in TAB_REGISTRY:
+            self.assertEqual(tabs.default_tab(media_type), "trending")
+
+    def test_get_tab_returns_definition(self):
+        tab = tabs.get_tab("anime", "this_season")
+        self.assertIsNotNone(tab)
+        self.assertEqual(tab.row_key, "mal_this_season")
+        self.assertIsNone(tabs.get_tab("anime", "nope"))
+
+    @patch("app.discover.tabs.builders._api_cached_results", return_value=[])
+    @patch("app.discover.tabs.builders.TRAKT_ADAPTER")
+    @patch("app.discover.tabs.builders.TMDB_ADAPTER")
+    def test_new_tab_row_keys_dispatch_to_a_builder(
+        self,
+        mock_tmdb,
+        mock_trakt,
+        _mock_cache,
+    ):
+        # Tab-only row keys (not the legacy registry keys) must resolve in the
+        # tab dispatcher rather than silently returning nothing.
+        for method in ("trending", "top_rated", "current_cycle", "airing_today"):
+            getattr(mock_tmdb, method).return_value = []
+        mock_trakt.movie_boxoffice.return_value = []
+        legacy = {"trending_right_now", "all_time_greats_unseen", "coming_soon"}
+        for media_type, tab_list in TAB_REGISTRY.items():
+            for tab in tab_list:
+                if tab.row_key in legacy:
+                    continue
+                result = tab_row_candidates(
+                    media_type,
+                    tab.row_key,
+                )
+                self.assertIsInstance(
+                    result,
+                    list,
+                    msg=f"{media_type}/{tab.row_key} did not dispatch to a builder",
+                )
+
+
+class AnimeSeasonHelperTests(TestCase):
+    def test_current_and_previous_season(self):
+        # 2026-06-22 -> spring; previous -> winter.
+        self.assertEqual(_current_anime_season(), (2026, "spring"))
+        self.assertEqual(_previous_anime_season(2026, "spring"), (2026, "winter"))
+        self.assertEqual(_previous_anime_season(2026, "winter"), (2025, "fall"))
+
+
+class MalAnimeBuilderTests(TestCase):
+    NODE = {
+        "id": 5114,
+        "title": "Fullmetal Alchemist: Brotherhood",
+        "main_picture": {"medium": "http://img/m.jpg", "large": "http://img/l.jpg"},
+        "mean": 9.1,
+        "num_scoring_users": 2000,
+        "num_list_users": 3000,
+        "genres": [{"id": 1, "name": "Action"}],
+        "start_date": "2009-04-05",
+    }
+
+    @patch("app.discover.tabs.builders.services.api_request")
+    def test_ranking_builder_normalizes_nodes(self, mock_api_request):
+        mock_api_request.return_value = {
+            "data": [{"node": self.NODE, "ranking": {"rank": 1}}],
+        }
+        candidates = _mal_anime_ranking_candidates(
+            ranking_type="all",
+            row_key="mal_anime_top_rated",
+            source_reason="MAL ranking",
+        )
+        self.assertEqual(len(candidates), 1)
+        item = candidates[0]
+        self.assertEqual(item.media_id, "5114")
+        self.assertEqual(item.media_type, "anime")
+        self.assertEqual(item.source, "mal")
+        self.assertEqual(item.rating, 9.1)
+        self.assertEqual(item.row_key, "mal_anime_top_rated")
+        self.assertIn("Action", item.genres)
+
+    @patch("app.discover.tabs.builders.services.api_request")
+    def test_season_builder_uses_member_count_for_popularity(self, mock_api_request):
+        mock_api_request.return_value = {"data": [{"node": self.NODE}]}
+        candidates = _mal_anime_season_candidates(
+            year=2026,
+            season="spring",
+            row_key="mal_this_season",
+            source_reason="MAL current season",
+        )
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].popularity, 3000.0)
+        self.assertEqual(candidates[0].row_key, "mal_this_season")
+
+
+class TabAvailabilityTests(TestCase):
+    @override_settings(MAL_API="real-key")
+    def test_mal_backed_tabs_enabled_when_key_present(self):
+        availability = capabilities.tab_availability("anime")
+        self.assertTrue(availability["this_season"]["enabled"])
+        self.assertIsNone(availability["this_season"]["tooltip"])
+
+    @override_settings(LASTFM_API_KEY="")
+    def test_lastfm_tabs_disabled_without_key(self):
+        availability = capabilities.tab_availability("music")
+        self.assertFalse(availability["trending"]["enabled"])
+        self.assertIn("LASTFM_API_KEY", availability["trending"]["tooltip"])
+        # MusicBrainz-backed tab needs no key and stays enabled.
+        self.assertTrue(availability["coming_soon"]["enabled"])
+
+    @override_settings(IGDB_ID="id", IGDB_SECRET="")
+    def test_igdb_needs_both_id_and_secret(self):
+        availability = capabilities.tab_availability("game")
+        self.assertFalse(availability["top_rated"]["enabled"])
+
+    @override_settings(MAL_API="real-key")
+    def test_first_enabled_tab_is_trending_when_available(self):
+        self.assertEqual(capabilities.first_enabled_tab("anime"), "trending")
+
+    @override_settings(LASTFM_API_KEY="")
+    def test_first_enabled_tab_skips_disabled_trending(self):
+        # Music trending needs Last.fm; the first usable tab is MusicBrainz coming-soon.
+        self.assertEqual(capabilities.first_enabled_tab("music"), "coming_soon")
+
+
+class DiscoverTabViewTests(TestCase):
+    def setUp(self):
+        self.credentials = {"username": "tab-user", "password": "secret123"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.warmup_patcher = patch(
+            "app.middleware.discover_tab_cache.maybe_schedule_user_warmup",
+            return_value=0,
+        )
+        self.warmup_patcher.start()
+        self.client.login(**self.credentials)
+
+    def tearDown(self):
+        self.warmup_patcher.stop()
+
+    def _row(self, row_key="mal_anime_top_rated"):
+        return RowResult(
+            key=row_key,
+            title="Top Rated",
+            mission="",
+            why="The highest rated anime of all time.",
+            source="mal",
+            items=[
+                CandidateItem(
+                    media_type="anime",
+                    source="mal",
+                    media_id="5114",
+                    title="Fullmetal Alchemist: Brotherhood",
+                ),
+            ],
+        )
+
+    @override_settings(MAL_API="real-key")
+    @patch("app.discover_views.discover.get_discover_tab_row")
+    def test_enabled_tab_returns_row_fragment(self, mock_get_tab_row):
+        mock_get_tab_row.return_value = self._row()
+        response = self.client.get(
+            reverse("discover_tab"),
+            {"media_type": "anime", "tab": "top_rated"},
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/discover_row.html")
+        self.assertContains(response, "Fullmetal Alchemist: Brotherhood")
+        mock_get_tab_row.assert_called_once()
+
+    def test_unknown_tab_is_rejected(self):
+        response = self.client.get(
+            reverse("discover_tab"),
+            {"media_type": "anime", "tab": "does-not-exist"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @override_settings(LASTFM_API_KEY="")
+    @patch("app.discover_views.discover.get_discover_tab_row")
+    def test_disabled_tab_is_rejected(self, mock_get_tab_row):
+        response = self.client.get(
+            reverse("discover_tab"),
+            {"media_type": "music", "tab": "top_artists"},
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_get_tab_row.assert_not_called()
+
+    @patch("app.discover_views.discover.get_discover_tab_row")
+    def test_grid_layout_returns_grid_only_fragment(self, mock_get_tab_row):
+        mock_get_tab_row.return_value = self._row(row_key="tmdb_top_rated")
+        response = self.client.get(
+            reverse("discover_tab"),
+            {
+                "media_type": "tv",
+                "tab": "top_rated",
+                "layout": "grid",
+                "active_media_type": "all",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/discover_grid.html")
+        self.assertContains(response, "Fullmetal Alchemist: Brotherhood")
+        # Grid fragment must not include the row header wrapper template.
+        self.assertTemplateNotUsed(response, "app/components/discover_row.html")
+
+
+class TabSourceIconTests(TestCase):
+    def test_multi_source_media_shows_source_icons(self):
+        icons = {
+            p["label"]: p["source_icon"]
+            for p in _discover_tabs_payload("tv", selected_tab="trending")
+        }
+        self.assertIn("trakt-logo", icons["Trending"])
+        self.assertIn("tmdb-logo", icons["Top Rated"])
+
+    def test_single_source_media_has_no_icons(self):
+        payload = _discover_tabs_payload("manga", selected_tab="trending")
+        self.assertTrue(all(p["source_icon"] is None for p in payload))
+
+
+class AllMediaTabsTests(TestCase):
+    def setUp(self):
+        self.credentials = {"username": "all-media-user", "password": "secret123"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.warmup_patcher = patch(
+            "app.middleware.discover_tab_cache.maybe_schedule_user_warmup",
+            return_value=0,
+        )
+        self.warmup_patcher.start()
+        self.client.login(**self.credentials)
+
+    def tearDown(self):
+        self.warmup_patcher.stop()
+
+    def _trending_row(self, media_type):
+        return RowResult(
+            key="trending_right_now",
+            title=f"{media_type.title()}: Trending Right Now",
+            mission="",
+            why="What everyone has been watching this week.",
+            source="trakt",
+            items=[
+                CandidateItem(
+                    media_type=media_type,
+                    source="tmdb",
+                    media_id="1",
+                    title=f"{media_type} pick",
+                ),
+            ],
+            component_media_type=media_type,
+        )
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_all_media_renders_per_media_tab_bars(
+        self,
+        mock_get_tab_rows,
+        _mock_warm,
+        mock_get_tab_status,
+    ):
+        mock_get_tab_rows.return_value = [
+            self._trending_row("tv"),
+            self._trending_row("anime"),
+        ]
+        mock_get_tab_status.return_value = {"is_refreshing": False}
+
+        response = self.client.get(reverse("discover"), {"media_type": "all"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-discover-media-section="tv"')
+        self.assertContains(response, 'data-discover-media-section="anime"')
+        self.assertContains(response, 'id="all-media-grid-tv"')
+        self.assertContains(response, 'id="all-media-grid-anime"')
+        # Anime-only tab proves the bar is per-media-type.
+        self.assertContains(response, "This Season")
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_all_media_shows_tab_bars_while_loading(
+        self,
+        mock_get_tab_rows,
+        _mock_warm,
+        mock_get_tab_status,
+    ):
+        # No rows ready yet and the tab cache is still refreshing.
+        mock_get_tab_rows.return_value = []
+        mock_get_tab_status.return_value = {"is_refreshing": True}
+
+        response = self.client.get(reverse("discover"), {"media_type": "all"})
+
+        self.assertEqual(response.status_code, 200)
+        # Tab bars render even though the grids have no data yet.
+        self.assertContains(response, 'data-discover-media-section="tv"')
+        self.assertContains(response, "Loading recommendations")

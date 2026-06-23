@@ -81,6 +81,7 @@ from app.discover.service_helpers import (
     _model_has_field,
     _rewatch_counts,
 )
+from app.discover.tabs import PROVIDER_TAB_ROW_KEYS  # fork:tabbed-discover
 from app.discover.trakt_candidates import (
     ROW_CACHE_SCHEMA_META_KEY,
     _genre_discovery_candidates,
@@ -541,7 +542,7 @@ def _build_row_candidates(
             source_reason="Planned and unplayed",
         )
 
-    if row_key in {
+    if row_key in PROVIDER_TAB_ROW_KEYS or row_key in {  # fork:tabbed-discover
         "trending_right_now",
         "trending_tv",
         "new_noteworthy",
@@ -635,7 +636,10 @@ def _build_row_candidates(
 
 
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
-    if row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}:
+    if (
+        row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}
+        or row_definition.key in PROVIDER_TAB_ROW_KEYS  # fork:tabbed-discover
+    ):
         return {
             Status.COMPLETED.value,
             Status.DROPPED.value,
@@ -1003,6 +1007,7 @@ def _compose_all_media_rows(
         row_prefix = _media_type_readable_plural(component_media_type)
         for row in component_rows:
             row.title = f"{row_prefix}: {row.title}"
+            row.component_media_type = component_media_type  # fork:tabbed-discover
             rows.append(row)
 
     return rows

@@ -1,0 +1,43 @@
+{# fork:tabbed-discover -- per-media-type tabbed sections for the All Media view. #}
+<div class="space-y-10">
+  {% for section in all_media_sections %}
+    <section data-discover-media-section="{{ section.media_type }}">
+      <h2 class="mb-3 text-xl font-semibold text-white">{{ section.label }}</h2>
+      <div role="tablist" aria-label="{{ section.label }} categories"
+           x-init="selectedTabByMedia['{{ section.media_type }}'] = selectedTabByMedia['{{ section.media_type }}'] || '{{ section.selected_tab|default:'trending'|escapejs }}'"
+           class="mb-4 flex flex-wrap gap-2 border-b border-gray-700 pb-3">
+        {% for tab in section.tabs %}
+          {% if tab.enabled %}
+            <button type="button" role="tab"
+                    @click="switchTabFor('{{ section.media_type }}', '{{ tab.key }}')"
+                    class="rounded-full border px-3 py-1.5 text-sm transition-colors cursor-pointer"
+                    :class="(selectedTabByMedia['{{ section.media_type }}'] || '{{ section.selected_tab|default:'trending'|escapejs }}') === '{{ tab.key }}'
+                      ? 'border-indigo-500 bg-indigo-600 text-white'
+                      : 'border-gray-700 bg-[#2a2f35] text-gray-300 hover:border-gray-500 hover:text-white'">
+              {% if tab.source_icon %}<img src="{{ tab.source_icon }}" alt="" aria-hidden="true" class="mr-1.5 inline-block h-3.5 w-3.5 object-contain align-text-bottom">{% endif %}{{ tab.label }}
+            </button>
+          {% else %}
+            <button type="button" role="tab" disabled aria-disabled="true"
+                    {% if tab.tooltip %}title="{{ tab.tooltip }}"{% endif %}
+                    class="rounded-full border border-gray-700 bg-[#2a2f35] px-3 py-1.5 text-sm text-gray-400 cursor-not-allowed opacity-40">
+              {% if tab.source_icon %}<img src="{{ tab.source_icon }}" alt="" aria-hidden="true" class="mr-1.5 inline-block h-3.5 w-3.5 object-contain align-text-bottom">{% endif %}{{ tab.label }}
+            </button>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div id="all-media-grid-{{ section.media_type }}">
+        {% if section.row %}
+          {% include "app/components/discover_grid.html" with row=section.row discover_active_media_type="all" show_more=show_more discover_debug=discover_debug %}
+        {% elif discover_loading %}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-5 text-sm text-amber-100">
+            Loading recommendations…
+          </div>
+        {% else %}
+          <div class="rounded-lg border border-dashed border-gray-700 bg-[#23272b] px-4 py-5 text-sm text-gray-400">
+            No items matched this row right now.
+          </div>
+        {% endif %}
+      </div>
+    </section>
+  {% endfor %}
+</div>

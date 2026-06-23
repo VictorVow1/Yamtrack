@@ -105,6 +105,7 @@ from app.discover_views import (
     discover_toggle_hidden,
     refresh_discover,
 )
+from app.discover_tab_views import discover_tab  # fork:tabbed-discover
 from app.history_views import (
     _build_anniversary_history_days,
     _build_release_history_days,

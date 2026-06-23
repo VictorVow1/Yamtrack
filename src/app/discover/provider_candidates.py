@@ -959,7 +959,15 @@ def _igdb_games_candidates(
     return candidates[:limit]
 
 
-def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:
+def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:  # noqa: C901, PLR0911, PLR0912
+    # fork:tabbed-discover -- editorial tab rows resolve via the fork's builders
+    # first; lazy import keeps provider_candidates free of a module-level cycle.
+    from app.discover.tabs.builders import tab_row_candidates  # noqa: PLC0415
+
+    tab_candidates = tab_row_candidates(media_type, row_key)
+    if tab_candidates is not None:
+        return tab_candidates
+
     if row_key == "trending_right_now":
         if media_type == MediaTypes.MOVIE.value:
             return TRAKT_ADAPTER.movie_watched_weekly(limit=100)

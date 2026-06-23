@@ -147,6 +147,9 @@ class RowResult:
     source_state: str = "live"
     match_signal: str | None = None
     debug_payload: dict[str, Any] | None = None
+    # Set only for All-Media composition: the concrete media type this row belongs
+    # to. Runtime-only (not serialized to the row cache).
+    component_media_type: str | None = None
 
     def to_dict(self, *, include_reserve: bool = False) -> dict[str, Any]:
         """Serialize row payload for DB row cache."""
@@ -167,6 +170,8 @@ class RowResult:
             data["match_signal"] = self.match_signal
         if self.debug_payload:
             data["debug_payload"] = dict(self.debug_payload)
+        if self.component_media_type:
+            data["component_media_type"] = self.component_media_type
         return data
 
     @classmethod
@@ -191,6 +196,7 @@ class RowResult:
             source_state=str(payload.get("source_state", "live")),
             match_signal=payload.get("match_signal"),
             debug_payload=payload.get("debug_payload"),
+            component_media_type=payload.get("component_media_type"),
         )
 
 

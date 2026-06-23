@@ -9,7 +9,7 @@ from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
-from app import discover
+from app import discover, discover_tab_views  # fork:tabbed-discover
 from app.discover import tab_cache as discover_tab_cache
 from app.models import (
     TV,
@@ -129,7 +129,7 @@ def _discover_rows_context(
         if not discover_debug
         else None
     )
-    return {
+    context = {
         "selected_media_type": selected_media_type,
         "show_more": show_more,
         "discover_debug": discover_debug,
@@ -144,6 +144,13 @@ def _discover_rows_context(
         ),
         "rows": rows,
     }
+    # fork:tabbed-discover -- merge tab-bar / All-Media-section context, or {} when
+    # the tabbed UI is off or the media type has no tabs (templates then fall back
+    # to upstream's stacked-row layout).
+    context.update(
+        discover_tab_views.tab_context(request, selected_media_type, rows),
+    )
+    return context
 
 
 def _apply_discover_response_headers(
