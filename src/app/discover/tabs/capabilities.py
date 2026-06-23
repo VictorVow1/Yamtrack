@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from django.conf import settings
 
-from app.discover.tabs import default_tab, get_tabs
+from app.discover.tabs.registry import default_tab, get_tabs
 
 # capability_key -> (human label, env var to set)
 _PROVIDER_INFO: dict[str, tuple[str, str]] = {

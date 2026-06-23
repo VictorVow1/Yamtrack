@@ -7,7 +7,7 @@
 {% endblock title %}
 
 {% block content %}
-  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }}, {{ discover_debug|yesno:'true,false' }}, {{ discover_loading|yesno:'true,false' }}, '{{ discover_activity_version|default:''|escapejs }}', '{{ selected_tab|default:'trending'|escapejs }}')"
+  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }}, {{ discover_debug|yesno:'true,false' }}, {{ discover_loading|yesno:'true,false' }}, '{{ discover_activity_version|default:''|escapejs }}')"
        x-init="init()"
        class="space-y-6">
     <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -102,12 +102,12 @@
 
 {% block js %}
   <script src="{% static 'js/cache-updater.js' %}"></script>
+  <script src="{% static 'js/discover-tabs.js' %}"></script>{# fork:tabbed-discover #}
   <script>
-    function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing, initialActivityVersion, initialTab) {
+    function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing, initialActivityVersion) {
       return {
+        ...window.discoverTabs("{% url 'discover_tab' %}"),  // fork:tabbed-discover
         selectedMedia: initialMedia || "all",
-        selectedTab: initialTab || "trending",
-        selectedTabByMedia: {},
         showMore: Boolean(initialShowMore),
         discoverDebug: Boolean(initialDebug),
         refreshing: false,
@@ -521,43 +521,6 @@
           this.resetRefreshState();
           this.syncCacheUpdater();
           this.fetchRows();
-        },
-        switchTab(tabKey) {
-          if (!tabKey || tabKey === this.selectedTab) {
-            return;
-          }
-          this.selectedTab = tabKey;
-          const params = new URLSearchParams();
-          params.set("media_type", this.selectedMedia);
-          params.set("tab", tabKey);
-          if (this.discoverDebug) {
-            params.set("discover_debug", "1");
-          }
-          htmx.ajax("GET", `{% url 'discover_tab' %}?${params.toString()}`, {
-            target: "#discover-tab-content",
-            swap: "innerHTML",
-          });
-        },
-        switchTabFor(mediaType, tabKey) {
-          if (!mediaType || !tabKey) {
-            return;
-          }
-          if ((this.selectedTabByMedia[mediaType] || "trending") === tabKey) {
-            return;
-          }
-          this.selectedTabByMedia = { ...this.selectedTabByMedia, [mediaType]: tabKey };
-          const params = new URLSearchParams();
-          params.set("media_type", mediaType);
-          params.set("tab", tabKey);
-          params.set("layout", "grid");
-          params.set("active_media_type", "all");
-          if (this.discoverDebug) {
-            params.set("discover_debug", "1");
-          }
-          htmx.ajax("GET", `{% url 'discover_tab' %}?${params.toString()}`, {
-            target: `#all-media-grid-${mediaType}`,
-            swap: "innerHTML",
-          });
         },
         toggleShowMore() {
           if (this.isHiddenView()) {

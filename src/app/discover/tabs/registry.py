@@ -4,8 +4,8 @@ Tabs are a thin projection over the row machinery: each tab renders a single
 ``row_key`` (see ``discover.registry`` / ``discover.provider_candidates``) as one
 grid. Ordering matters -- the first tab per media type is the default selection.
 
-The tab -> endpoint -> key mapping is documented in ``DISCOVER.md`` at the repo
-root; keep the two in sync.
+This registry is part of the fork's tabbed-Discover feature; see ``FORK.md`` at the
+repo root for the hook points it plugs into.
 """
 
 from __future__ import annotations
@@ -192,6 +192,13 @@ SOURCE_ICONS: dict[str, str] = {
     "lastfm": "img/lastfm-logo.png",
     "musicbrainz": "img/musicbrainz-logo.ico",
 }
+
+
+# Every row key surfaced through a tab, derived from the registry so new tabs
+# route through the provider builders without hand-editing discover.service.
+PROVIDER_TAB_ROW_KEYS: frozenset[str] = frozenset(
+    tab.row_key for tabs in TAB_REGISTRY.values() for tab in tabs
+)
 
 
 def get_tabs(media_type: str) -> list[TabDefinition]:

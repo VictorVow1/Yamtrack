@@ -81,7 +81,7 @@ from app.discover.service_helpers import (
     _model_has_field,
     _rewatch_counts,
 )
-from app.discover.tabs import TAB_REGISTRY, TAB_ROW_DESCRIPTIONS
+from app.discover.tabs import PROVIDER_TAB_ROW_KEYS  # fork:tabbed-discover
 from app.discover.trakt_candidates import (
     ROW_CACHE_SCHEMA_META_KEY,
     _genre_discovery_candidates,
@@ -100,12 +100,6 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Row keys backed by an external provider tab (derived from the tab registry so
-# new tabs route through _provider_row_candidates without touching this module).
-_PROVIDER_TAB_ROW_KEYS = frozenset(
-    tab.row_key for tabs in TAB_REGISTRY.values() for tab in tabs
-)
 
 STALE_REFRESH_LOCK_SECONDS = 60
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
@@ -548,7 +542,7 @@ def _build_row_candidates(
             source_reason="Planned and unplayed",
         )
 
-    if row_key in _PROVIDER_TAB_ROW_KEYS or row_key in {
+    if row_key in PROVIDER_TAB_ROW_KEYS or row_key in {  # fork:tabbed-discover
         "trending_right_now",
         "trending_tv",
         "new_noteworthy",
@@ -644,7 +638,7 @@ def _build_row_candidates(
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
     if (
         row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}
-        or row_definition.key in _PROVIDER_TAB_ROW_KEYS
+        or row_definition.key in PROVIDER_TAB_ROW_KEYS  # fork:tabbed-discover
     ):
         return {
             Status.COMPLETED.value,
@@ -1013,7 +1007,7 @@ def _compose_all_media_rows(
         row_prefix = _media_type_readable_plural(component_media_type)
         for row in component_rows:
             row.title = f"{row_prefix}: {row.title}"
-            row.component_media_type = component_media_type
+            row.component_media_type = component_media_type  # fork:tabbed-discover
             rows.append(row)
 
     return rows
@@ -1276,54 +1270,6 @@ def get_discover_rows(
         rows.append(row)
 
     return rows
-
-
-def _tab_row_definition(media_type: str, tab) -> RowDefinition:
-    """Return the RowDefinition backing a tab.
-
-    Reuses the registry definition when the tab maps to an existing row (so the
-    Trakt canon/anticipated build paths and copy are preserved); otherwise
-    synthesizes a definition for the new tab-only row.
-    """
-    for row_definition in get_rows(media_type, include_show_more=True):
-        if row_definition.key == tab.row_key:
-            return row_definition
-    return RowDefinition(
-        key=tab.row_key,
-        title=tab.label,
-        mission="",
-        why=TAB_ROW_DESCRIPTIONS.get(tab.row_key, ""),
-        source=tab.provider,
-    )
-
-
-def get_discover_tab_row(user, media_type: str, tab) -> RowResult:
-    """Build a single editorial tab row on demand.
-
-    Unlike the stacked rows, a user-selected tab always renders (even when sparse),
-    so the min-items / drop-if-empty filtering used by get_discover_rows is skipped.
-    """
-    media_type = _coerce_media_type(media_type)
-    media_type = tab_cache.resolve_media_type_for_user(user, media_type)
-    row_definition = _tab_row_definition(media_type, tab)
-    profile_payload = get_or_compute_taste_profile(user, media_type)
-    row = _build_and_cache_row(
-        user,
-        media_type,
-        row_definition,
-        profile_payload,
-        defer_artwork=False,
-        show_more=False,
-    )
-    deduped_items = dedupe_candidates(row.items, seen_identities=set())
-    row.items = deduped_items[:MAX_ITEMS_PER_ROW]
-    row.reserve_items = deduped_items[MAX_ITEMS_PER_ROW:]
-    row.match_signal = _row_match_signal_with_details(
-        row_definition.key,
-        row.items,
-        profile_payload,
-    )[0]
-    return row
 
 
 def get_discover_payload(

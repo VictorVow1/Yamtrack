@@ -6,16 +6,17 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from app.discover import capabilities, provider_candidates, tabs
-from app.discover.provider_candidates import (
+from app.discover import tabs
+from app.discover.schemas import CandidateItem, RowResult
+from app.discover.tabs import TAB_REGISTRY, capabilities
+from app.discover.tabs.builders import (
     _current_anime_season,
     _mal_anime_ranking_candidates,
     _mal_anime_season_candidates,
     _previous_anime_season,
+    tab_row_candidates,
 )
-from app.discover.schemas import CandidateItem, RowResult
-from app.discover.tabs import TAB_REGISTRY
-from app.discover_views import _discover_tabs_payload
+from app.discover_tab_views import _discover_tabs_payload
 
 
 class TabRegistryTests(TestCase):
@@ -31,9 +32,9 @@ class TabRegistryTests(TestCase):
         self.assertEqual(tab.row_key, "mal_this_season")
         self.assertIsNone(tabs.get_tab("anime", "nope"))
 
-    @patch("app.discover.provider_candidates._api_cached_results", return_value=[])
-    @patch("app.discover.provider_candidates.TRAKT_ADAPTER")
-    @patch("app.discover.provider_candidates.TMDB_ADAPTER")
+    @patch("app.discover.tabs.builders._api_cached_results", return_value=[])
+    @patch("app.discover.tabs.builders.TRAKT_ADAPTER")
+    @patch("app.discover.tabs.builders.TMDB_ADAPTER")
     def test_new_tab_row_keys_dispatch_to_a_builder(
         self,
         mock_tmdb,
@@ -50,7 +51,7 @@ class TabRegistryTests(TestCase):
             for tab in tab_list:
                 if tab.row_key in legacy:
                     continue
-                result = provider_candidates._tab_row_candidates(
+                result = tab_row_candidates(
                     media_type,
                     tab.row_key,
                 )
@@ -81,7 +82,7 @@ class MalAnimeBuilderTests(TestCase):
         "start_date": "2009-04-05",
     }
 
-    @patch("app.discover.provider_candidates.services.api_request")
+    @patch("app.discover.tabs.builders.services.api_request")
     def test_ranking_builder_normalizes_nodes(self, mock_api_request):
         mock_api_request.return_value = {
             "data": [{"node": self.NODE, "ranking": {"rank": 1}}],
@@ -100,7 +101,7 @@ class MalAnimeBuilderTests(TestCase):
         self.assertEqual(item.row_key, "mal_anime_top_rated")
         self.assertIn("Action", item.genres)
 
-    @patch("app.discover.provider_candidates.services.api_request")
+    @patch("app.discover.tabs.builders.services.api_request")
     def test_season_builder_uses_member_count_for_popularity(self, mock_api_request):
         mock_api_request.return_value = {"data": [{"node": self.NODE}]}
         candidates = _mal_anime_season_candidates(
